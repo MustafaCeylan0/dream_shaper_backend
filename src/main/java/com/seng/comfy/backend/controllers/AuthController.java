@@ -1,6 +1,7 @@
 package com.seng.comfy.backend.controllers;
 
 import com.seng.comfy.backend.entity.UserAuth;
+import com.seng.comfy.backend.entity.UserProfile;
 import com.seng.comfy.backend.helper.AuthenticationRequest;
 import com.seng.comfy.backend.helper.AuthenticationResponse;
 import com.seng.comfy.backend.jwt.JwtUtil;
@@ -18,6 +19,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Map;
+
 @RestController
 public class AuthController {
     @Autowired
@@ -32,35 +37,40 @@ public class AuthController {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+
+
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody UserAuth user) {
+        // Check if the email is already in use
         if (userAuthRepository.findByEmail(user.getEmail()).isPresent()) {
             return ResponseEntity.badRequest().body("Email is already in use");
         }
+
+        // Check if the username is already in use
         if(userAuthRepository.findByUsername(user.getUsername()).isPresent()){
             return ResponseEntity.badRequest().body("Username is already in use");
         }
+
+        // Encode the password
         user.setPassword(passwordEncoder.encode(user.getPassword()));
+
+        // Create a new UserProfile
+        UserProfile userProfile = new UserProfile();
+        user.setUserProfile(userProfile); // Associate UserProfile with UserAuth
+        userProfile.setUser(user); // Associate UserAuth with UserProfile
+
+        // Save the UserAuth entity, which should also save UserProfile due to CascadeType.ALL
         UserAuth newUser = userAuthRepository.save(user);
-        newUser.setPassword(null); // Don't return the password hash
-        return ResponseEntity.ok(newUser);
+
+        // Clear the password before returning the response
+        newUser.setPassword(null);
+
+        // Return the response
+        return ResponseEntity.status(HttpStatus.CREATED).body(newUser);
     }
 
 
-/* Old login endpoint
 
- @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody UserAuth user) {
-
-        Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(user.getUsername(), user.getPassword())
-        );
-        if (authentication.isAuthenticated()) {
-            return ResponseEntity.ok("User logged in successfully");
-        } else {
-            return ResponseEntity.badRequest().body("Invalid username or password");
-        }
-    }*/
 
     @PostMapping("/login")
     public ResponseEntity<?> createAuthenticationToken(@RequestBody AuthenticationRequest authenticationRequest) {

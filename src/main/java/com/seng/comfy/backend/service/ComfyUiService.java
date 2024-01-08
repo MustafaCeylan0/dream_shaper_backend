@@ -1,11 +1,15 @@
 package com.seng.comfy.backend.service;
 
+import com.seng.comfy.backend.helper.GenerateRequest;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -20,13 +24,20 @@ public class ComfyUiService {
     private final RestTemplate restTemplate;
     private final WebSocketService webSocketService;
 
+
+    //directory to save the full size images
+    static String imagesDirPath = "src/main/resources/static/images/";
+
+    //directory to save the low quality images
+    static String lq_imagesDirPath = "src/main/resources/static/lq_images/";
+
     @Autowired
     public ComfyUiService(RestTemplate restTemplate, WebSocketService webSocketService) {
         this.restTemplate = restTemplate;
         this.webSocketService = webSocketService;
     }
 
-    public String queuePrompt(String prompt) throws IOException {
+    public String queuePrompt(GenerateRequest generateRequest) throws IOException {
         String filePath = "src/main/resources/static/comfy_templates/default_workflow.json";
         String temp = "";
         String serverAddress = "127.0.0.1:8188"; // The server address
@@ -44,7 +55,11 @@ public class ComfyUiService {
         try {
             String content = new String(Files.readAllBytes(Paths.get(filePath)));
             JSONObject copyJson = new JSONObject(content);
-            copyJson.getJSONObject("6").getJSONObject("inputs").put("text", prompt);
+            copyJson.getJSONObject("6").getJSONObject("inputs").put("text", generateRequest.getPrompt());
+            copyJson.getJSONObject("7").getJSONObject("inputs").put("text", generateRequest.getNegativePrompt());
+            Integer[] resolution = getResolution(generateRequest.getResolution(), generateRequest.getRatio());
+            copyJson.getJSONObject("5").getJSONObject("inputs").put("width", resolution[0]);
+            copyJson.getJSONObject("5").getJSONObject("inputs").put("height", resolution[1]);
             copyJson.getJSONObject("3").getJSONObject("inputs").put("seed", System.nanoTime());
             temp = copyJson.toString(); // for pretty printing
         } catch (Exception e) {
@@ -80,6 +95,36 @@ public class ComfyUiService {
         return imgName;
     }
 
+
+    public Integer[] getResolution(Integer resolution, String ratioString) {
+        String[] ratioParts = ratioString.split(":");
+        if (ratioParts.length != 2) {
+            return new Integer[]{resolution, resolution}; // Default to square if ratio is invalid
+        }
+
+        try {
+            int x = Integer.parseInt(ratioParts[0]);
+            int y = Integer.parseInt(ratioParts[1]);
+
+            if (x <= 0 || y <= 0) {
+                return new Integer[]{resolution, resolution}; // Default to square if ratio parts are non-positive
+            }
+
+            int smallerDimension = Math.min(x, y);
+            int largerDimension = Math.max(x, y);
+
+            // Calculate the other dimension based on the ratio
+            if (smallerDimension == x) {
+                return new Integer[]{resolution, (int) Math.round(resolution * ((double) y / x))};
+            } else {
+                return new Integer[]{(int) Math.round(resolution * ((double) x / y)), resolution};
+            }
+        } catch (NumberFormatException e) {
+            return new Integer[]{resolution, resolution}; // Default to square if ratio parts are not integers
+        }
+    }
+
+
     public static byte[] getImage(String filename, String subfolder, String type) throws IOException {
         String urlString = "http://127.0.0.1:8188/view?filename=" + filename + "&subfolder=" + subfolder + "&type=" + type;
         URL url = new URL(urlString);
@@ -112,10 +157,14 @@ public class ComfyUiService {
         }
 
         JSONObject outputs = promptData.getJSONObject("outputs");
-        String imagesDirPath = "src/main/resources/static/images/";
         File imagesDir = new File(imagesDirPath);
         if (!imagesDir.exists()) {
             imagesDir.mkdirs();
+        }
+
+        File lqImagesDir = new File(lq_imagesDirPath);
+        if (!lqImagesDir.exists()) {
+            lqImagesDir.mkdirs();
         }
 
         for (String key : outputs.keySet()) {
@@ -124,18 +173,25 @@ public class ComfyUiService {
                 JSONArray images = output.getJSONArray("images");
                 for (int j = 0; j < images.length(); j++) {
                     JSONObject image = images.getJSONObject(j);
-                    String filename = image.getString("filename"); // Filename to be returned
-
-                    String subfolder = image.optString("subfolder", ""); // Using optString to handle missing subfolder
+                    String filename = image.getString("filename");
+                    String uidName = UUID.randomUUID().toString() + ".jpg"; // Change the file extension to .jpg
+                    String lqUidName = "lq_" + uidName;
+                    String subfolder = image.optString("subfolder", "");
                     String type = image.getString("type");
 
-                    File outputFile = new File(imagesDirPath + filename);
+                    File outputFile = new File(imagesDirPath + uidName);
+                    File lqOutputFile = new File(lq_imagesDirPath + lqUidName); // File for low-quality image
+
                     try {
                         byte[] imageData = getImage(filename, subfolder, type);
-                        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-                            fos.write(imageData);
-                        }
-                        return filename; // Return the filename of the first successfully processed image
+                        BufferedImage bufferedImage = ImageIO.read(new ByteArrayInputStream(imageData));
+                        ImageIO.write(bufferedImage, "jpg", outputFile); // Save original image as JPG
+
+                        // Resize and save low-quality image
+                        BufferedImage lqImage = resizeImage(bufferedImage, bufferedImage.getWidth() / 4, bufferedImage.getHeight() / 4);
+                        ImageIO.write(lqImage, "jpg", lqOutputFile);
+
+                        return uidName; // Return the filename of the first successfully processed image
                     } catch (FileNotFoundException e) {
                         System.err.println("File not found for writing image data: " + outputFile.getAbsolutePath());
                         e.printStackTrace();
@@ -149,7 +205,13 @@ public class ComfyUiService {
 
         return "error"; // Return "error" if no images were processed successfully
     }
-
+    private static BufferedImage resizeImage(BufferedImage originalImage, int targetWidth, int targetHeight) {
+        BufferedImage resizedImage = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
+        Graphics2D graphics2D = resizedImage.createGraphics();
+        graphics2D.drawImage(originalImage, 0, 0, targetWidth, targetHeight, null);
+        graphics2D.dispose();
+        return resizedImage;
+    }
     public static String retrieveImage(String promptId) {
         final int maxAttempts = 10; // Maximum number of attempts
         final long delayMillis = 2000; // Delay between attempts in milliseconds

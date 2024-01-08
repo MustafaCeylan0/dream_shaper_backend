@@ -1,5 +1,6 @@
 package com.seng.comfy.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -13,8 +14,13 @@ public class UserAuth implements UserDetails {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "user_id")
     private Long userId;
 
+    @JsonManagedReference // This annotation will handle the serialization part
+    @OneToOne(cascade = CascadeType.ALL,mappedBy = "user", fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", referencedColumnName = "user_id")
+    private UserProfile userProfile;
     @Column(length = 100, nullable = false, unique = true)
     private String username;
 
@@ -26,10 +32,15 @@ public class UserAuth implements UserDetails {
 
     private String providerId;
 
+
+
     @Column(nullable = false, unique = true)
     private String email;
 
     private String refreshToken;
+
+
+
 
 
     public UserAuth(String email, String password) {
@@ -126,6 +137,14 @@ public class UserAuth implements UserDetails {
 
     public void setRefreshToken(String refreshToken) {
         this.refreshToken = refreshToken;
+    }
+
+    public UserProfile getUserProfile() {
+        return userProfile;
+    }
+
+    public void setUserProfile(UserProfile userProfile) {
+        this.userProfile = userProfile;
     }
 
 

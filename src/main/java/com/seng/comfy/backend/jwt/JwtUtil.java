@@ -19,7 +19,7 @@ public class JwtUtil {
         return JWT.create()
                 .withSubject(username)
                 .withIssuedAt(new Date(System.currentTimeMillis()))
-                .withExpiresAt(new Date(System.currentTimeMillis() + 10 * 60 * 1000)) // TOKEN EXPIRATION
+                .withExpiresAt(new Date(System.currentTimeMillis() + 100 * 60 * 1000)) // TOKEN EXPIRATION
                 .sign(Algorithm.HMAC256(SECRET_KEY));
     }
 
@@ -37,4 +37,5 @@ public class JwtUtil {
     public String extractUsername(String token) {
         return JWT.require(Algorithm.HMAC256(SECRET_KEY)).build().verify(token).getSubject();
     }
+
 }
