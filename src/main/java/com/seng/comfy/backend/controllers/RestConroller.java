@@ -44,7 +44,9 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.*;
 
-@RestController
+
+
+@RestController()
 public class RestConroller {
 
 
@@ -451,23 +453,41 @@ public class RestConroller {
     @PostMapping("/admin/credit")
     public ResponseEntity<?> addCredits(
             @RequestHeader("X-API-KEY") String apiKey,
-            @RequestParam Long user_id,
-            @RequestParam int amount) {
+            @RequestParam int amount,
+      @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
 
         if (!apiKeyService.isValidKey(apiKey)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid API Key");
         }
 
-        Optional<UserProfile> userOptional = userProfileRepository.findByUserId(user_id);
-        if (!userOptional.isPresent()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+        try {
+            String jwtToken = authorizationHeader.substring(7);
+            String username = jwtUtil.extractUsername(jwtToken);
+            Optional<UserAuth> userAuthOpt = userAuthRepository.findByUsername(username);
+            if (userAuthOpt.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found.");
+            }
+
+            Long userId = userAuthOpt.get().getUserId();
+
+            Optional<UserProfile> userOptional = userProfileRepository.findByUserId(userId);
+            if (!userOptional.isPresent()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+            }
+
+            UserProfile userProfile = userOptional.get();
+            userProfile.setCredits(userProfile.getCredits() + amount);
+            userProfileRepository.save(userProfile);
+
+            return ResponseEntity.ok().body("Credits added successfully");
+
+
+        } catch (Exception e) {
+            // Generic exception handling, replace this with more specific handling if necessary
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("An error occurred: " + e.getMessage());
         }
 
-        UserProfile userProfile = userOptional.get();
-        userProfile.setCredits(userProfile.getCredits() + amount);
-        userProfileRepository.save(userProfile);
 
-        return ResponseEntity.ok().body("Credits added successfully");
     }
 
 
@@ -478,7 +498,7 @@ public class RestConroller {
             @RequestParam(required = false) MultipartFile pp,
             @RequestParam(required = false) String bio) {
 
-        Set<String> allowedExtensions = new HashSet<>(Arrays.asList("jpg", "jpeg", "png"));
+        Set<String> allowedExtensions = new HashSet<>(Arrays.asList(".jpg", ".jpeg", ".png"));
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid JWT token type.");
         }
@@ -501,7 +521,7 @@ public class RestConroller {
                     fileExtension = originalFilename.substring(originalFilename.lastIndexOf("."));
                 }
                 if (!allowedExtensions.contains(fileExtension)) {
-                    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Unsupported image format");
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("file extension "+fileExtension+ "  Unsupported image format");
                 }
                 String newFilename = userProfile.getUserId() + fileExtension;
                 Path imagePath = Paths.get(imagesDirPath, "pp_images", newFilename);
